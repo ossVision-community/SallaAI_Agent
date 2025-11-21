@@ -1,7 +1,7 @@
-# KSA Shopping Ranker – Backend (FastAPI + LangGraph)
+# KSA Shopping Agent – Backend (FastAPI + LangGraph)
 
-This backend provides an AI-powered product ranking service optimized for the Saudi market.  
-It uses LangGraph, OpenAI, and SearchAPI.io (Google Shopping) to search for products, normalize specs, and select the best offers according to a clear policy.
+This backend provides an AI-powered shopping agent optimized for the Saudi market.  
+It uses LangGraph, OpenAI, and SearchAPI.io (Google Shopping) to search for products, normalize specs, and recommend the best offers according to a clear policy.
 
 ## Overview
 
@@ -17,18 +17,18 @@ It uses LangGraph, OpenAI, and SearchAPI.io (Google Shopping) to search for prod
   - Given a free-text query (e.g. `"iPhone 17 Pro 256GB"` or `"27 inch 2K monitor"`),
   - The agent calls Google Shopping via SearchAPI.io,
   - Normalizes retailers, specs, and prices,
-  - Applies a KSA-focused ranking policy,
+  - Applies a KSA-focused selection policy,
   - Optionally prefers *trusted Saudi retailers* (Jarir, Extra, Noon, Amazon.sa, Apple Store, etc.),
-  - Returns a clean JSON with the top ranked items and links.
+  - Returns a clean JSON with the top recommended items and links.
 
-This backend is designed to be consumed later by a web or mobile frontend, or by a higher-level conversational `/chat` endpoint.
+This Agent is designed to be consumed later by a web or mobile frontend, or by a higher-level conversational `/chat` endpoint.
 
 ---
 
 ## Features
 
 - Search any product supported by Google Shopping (phones, screens, laptops, etc.).
-- Ranking policy:
+- Selection policy:
   - Prefer trusted KSA retailers (Jarir, Extra, Noon, Amazon.sa, Apple Store…).
   - Prefer **New** > **Refurbished** > **Used** > **Unknown** condition.
   - Then sort by lowest price in SAR.
@@ -43,24 +43,27 @@ This backend is designed to be consumed later by a web or mobile frontend, or by
     - `spec_normalizer_batch`.
     - `price_normalizer_batch`.
 - FastAPI endpoint:
-  - `POST /rank` – main ranking endpoint.
+  - `POST /rank` – main agent endpoint.
 
 ---
 
 ## Project Structure
 
-```text
 .
   main.py               # FastAPI app entrypoint
-  models.py             # Pydantic models (RankRequest, RankResponse, etc.)
+  models.py             # Pydantic models
   Agent/
     graph.py            # LangGraph agent (plan/act/observe/finish)
+    intent.py           # Intent analysis logic
+    ranking.py          # LLM ranking logic
+    tools.py            # Search & fetch tools
+    normalizers.py      # Data normalization helpers
   API/
     routes_rank.py      # /rank endpoint router
     schemas.py          # Request/response models
   Core/
     config.py           # Secrets + client helpers
     constants.py        # Trusted retailers, default limits, etc.
-  Docs/
+  Docs/                 # Documentation (Logic, Contributing, etc.)
   .env                  # Environment variables (not committed)
   requirements.txt      # Python dependencies
