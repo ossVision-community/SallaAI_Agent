@@ -13,9 +13,9 @@ def llm_rank_offers(
     query: str,
     intent: Dict[str, Any],
     trusted_only: bool = False,
-    top_k: int = 4,
+    top_k: int = 1,  # Default to 1 - we're a concierge, not a search engine
 ) -> Dict[str, Any]:
-    """Final LLM re-ranking with policy-aware selection and JSON output."""
+    """Final LLM selection - pick THE BEST product with detailed reasoning."""
     if not offers:
         return {"items": [], "notes": "No offers available for ranking."}
 
@@ -47,9 +47,11 @@ def llm_rank_offers(
     }
 
     system = (
-        "You are a Saudi Arabia shopping concierge. Select products that satisfy the user need, "
-        "respect budgets, and provide short reasoning. Prefer trusted retailers when requested. "
-        "If images are provided, pass them through. Return strict JSON according to the schema."
+        "You are a premium Saudi Arabia shopping concierge. Your job is to pick THE SINGLE BEST product. "
+        "NOT a list - pick ONE winner and explain WHY it's the best choice for this user. "
+        "Consider: price/value, trusted retailer, condition, specs matching user needs. "
+        "The 'reason' field should be a compelling 1-2 sentence explanation. "
+        "Match the user's language (English→English, Arabic→Arabic)."
     )
     schema = {
         "type": "object",
@@ -84,14 +86,10 @@ def llm_rank_offers(
             {
                 "role": "user",
                 "content": (
-                    "User query:\n"
-                    f"{query}\n\n"
-                    "Shopping intent:\n"
-                    f"{json.dumps(policy, ensure_ascii=False)}\n\n"
-                    "Candidate offers:\n"
-                    f"{json.dumps(slim, ensure_ascii=False)}\n\n"
-                    "Return schema:\n"
-                    f"{json.dumps(schema, ensure_ascii=False)}"
+                    f"User query: {query}\n\n"
+                    f"Shopping intent: {json.dumps(policy, ensure_ascii=False)}\n\n"
+                    f"Candidates ({len(slim)} options): {json.dumps(slim, ensure_ascii=False)}\n\n"
+                    f"Pick THE BEST {top_k} product(s). Return JSON with 'items' array and 'notes'."
                 ),
             },
         ],

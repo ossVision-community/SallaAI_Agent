@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, START, END
 
 from Core.constants import TRUSTED_KSA
 from Agent.tools import shopping_search, product_page_fetch
-from Agent.normalizers import spec_normalizer, price_normalizer
+from Agent.normalizers import spec_normalizer, price_normalizer, batch_spec_normalizer
 from Agent.ranking import llm_rank_offers
 from Agent.intent import analyze_intent
 
@@ -30,6 +30,7 @@ class AgentState(TypedDict, total=False):
     follow_up_question: Optional[str]
     search_query: str
     clarification_count: int
+    result: Dict[str, Any]  # Final output with items and notes
 
 
 # -----------------------------
@@ -68,6 +69,7 @@ def planner(state: AgentState) -> AgentState:
     # Enforce max of 5 tool steps (roughly 5 agent messages)
     if steps >= 5:
         state["done"] = True
+        state["needs_more_info"] = False  # Ensure we don't get stuck in a loop if we hit step limit
         return state
 
     # If we already tried shopping_search and got nothing → stop
@@ -127,16 +129,29 @@ def actor(state: AgentState) -> AgentState:
             state.setdefault("offers", []).extend(res)
 
         elif name == "spec_normalizer_batch":
-            for o in state.get("offers", []):
-                norm = spec_normalizer(
-                    o.get("name", ""),
-                    o.get("retailer", ""),
-                    o.get("condition", ""),
-                )
-                o.update(norm)
+            offers = state.get("offers", [])
+            if offers:
+                items_to_norm = [
+                    {
+                        "name": o.get("name", ""),
+                        "retailer": o.get("retailer", ""),
+                        "condition": o.get("condition", "")
+                    }
+                    for o in offers
+                ]
+                normalized_list = batch_spec_normalizer(items_to_norm)
+                for o, norm in zip(offers, normalized_list):
+                    o.update(norm)
 
         elif name == "product_page_fetch_batch":
-            url_map = {u: product_page_fetch(u) for u in args.get("urls", [])}
+            # Safe fetch wrapper
+            def safe_fetch(u):
+                try:
+                    return product_page_fetch(u)
+                except Exception:
+                    return {"ok": False}
+
+            url_map = {u: safe_fetch(u) for u in args.get("urls", [])}
             for o in state.get("offers", []):
                 u = o.get("link")
                 if u in url_map and url_map[u].get("ok"):
@@ -180,7 +195,7 @@ def observer(state: AgentState) -> AgentState:
 
 # -----------------------------
 # Finisher
-# -----------------------------def finisher(state: AgentState) -> Dict[str, Any]:
+# -----------------------------
 def finisher(state: AgentState) -> Dict[str, Any]:
     """
     Final node:
@@ -203,41 +218,22 @@ def finisher(state: AgentState) -> Dict[str, Any]:
         return state
 
     intent = state.get("intent", {})
-    category = (intent.get("category") or "").lower()
-    min_budget = intent.get("budget_min")
-    max_budget = intent.get("budget_max")
-    must_have = intent.get("must_have", [])
-    nice_to_have = intent.get("nice_to_have", [])
 
     def pass_basic(o: Dict[str, Any]) -> bool:
-        """Basic validation before LLM ranking."""
-        name = (o.get("name") or "").lower()
+        """Basic validation - only check essential fields exist."""
         price_val = o.get("price_sar", o.get("price"))
         link = o.get("link")
-
+        
+        # Only reject if missing essential data
         if not link or price_val is None:
             return False
         try:
-            price = float(price_val)
+            float(price_val)
         except Exception:
             return False
-
-        if isinstance(min_budget, (int, float)) and price < float(min_budget):
-            return False
-        if isinstance(max_budget, (int, float)) and price > float(max_budget):
-            return False
-
-        if category and category not in name:
-            return False
-
-        # Ensure must-have keywords appear somewhere
-        for token in must_have:
-            token_lower = token.lower()
-            if token_lower and token_lower not in name:
-                return False
-
         return True
 
+    # Let LLM ranker handle smart filtering - don't over-filter here
     candidates = [o for o in offers if pass_basic(o)]
 
     def is_trusted(o: Dict[str, Any]) -> bool:
@@ -288,23 +284,32 @@ def finisher(state: AgentState) -> Dict[str, Any]:
         )
     )
 
-    # LLM re-ranking (keeps links & images)
-    ranked = llm_rank_offers(base[:20], q, intent=intent, trusted_only=trusted_only, top_k=4)
-
+    # LLM picks THE BEST product (not a list)
     try:
-        print("\nTop Picks (trusted first, New→Used, lowest price):")
-        for it in ranked.get("items", []):
-            print(f"- {it['retailer']} | {it['name']} | {it['price']} {it['currency']}\n  {it['link']}")
-    except Exception:
-        pass
-
-    # Store result in the state (this is what FastAPI will see)
-    state["result"] = {
-        "items": ranked.get("items", []),
-        "notes": ranked.get("notes"),
-    }
+        ranked = llm_rank_offers(base[:20], q, intent=intent, trusted_only=trusted_only, top_k=1)
+        state["result"] = {
+            "items": ranked.get("items", []),
+            "notes": ranked.get("notes"),
+        }
+    except Exception as e:
+        state.setdefault("errors", []).append(f"Ranking failed: {e}")
+        # Fallback: return first offer as-is
+        if base:
+            state["result"] = {
+                "items": [{
+                    "name": base[0].get("name"),
+                    "price": base[0].get("price_sar", base[0].get("price")),
+                    "currency": "SAR",
+                    "retailer": base[0].get("retailer"),
+                    "link": base[0].get("link"),
+                    "reason": "Best available option",
+                }],
+                "notes": None,
+            }
+        else:
+            state["result"] = {"items": [], "notes": "Ranking failed"}
+    
     state["needs_more_info"] = False
-
     return state
 
 # -----------------------------

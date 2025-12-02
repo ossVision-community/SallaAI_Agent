@@ -45,7 +45,7 @@ def normalize_retailer(name: Optional[str]) -> str:
 def shopping_search(
     query: str,
     gl: str = "sa",
-    hl: str = "ar",
+    hl: str = "en",  # Default to English to match user's likely preference, or pass explicitly
     google_domain: str = "google.com.sa",
     location: str = "Riyadh, Saudi Arabia",
     limit: int = 40,
